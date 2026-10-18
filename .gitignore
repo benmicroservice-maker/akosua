@@ -1,0 +1,11 @@
+# Akosua repo — what must NEVER be pushed (huge or generated)
+code-oss/
+vscode-src/
+**/node_modules/
+**/dist/
+**/out/
+.build/
+*.log
+akosua-build-state.json
+.akosua/research-cache.json
+__pycache__/

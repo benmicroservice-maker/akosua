@@ -1,0 +1,164 @@
+{
+  "name": "akosua",
+  "displayName": "Akosua",
+  "description": "Akosua \u2014 personal AI coding agent. Understand -> Research -> Plan -> Build -> Verify. Never guess.",
+  "version": "0.1.0",
+  "publisher": "akosua",
+  "private": true,
+  "engines": {
+    "vscode": "^1.143.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onView:akosua.chat",
+    "onCommand:akosua.setClaudeKey",
+    "onCommand:akosua.openPanel"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "akosua",
+          "title": "Akosua",
+          "icon": "media/akosua.svg"
+        }
+      ]
+    },
+    "views": {
+      "akosua": [
+        {
+          "type": "webview",
+          "id": "akosua.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "akosua.openPanel",
+        "title": "Akosua: Focus Chat"
+      },
+      {
+        "command": "akosua.setClaudeKey",
+        "title": "Akosua: Set Claude (Anthropic) API Key"
+      },
+      {
+        "command": "akosua.setOpenAIKey",
+        "title": "Akosua: Set OpenAI API Key"
+      },
+      {
+        "command": "akosua.setFirecrawlKey",
+        "title": "Akosua: Set Firecrawl API Key"
+      },
+      {
+        "command": "akosua.setContext7Key",
+        "title": "Akosua: Set Context7 API Key"
+      },
+      {
+        "command": "akosua.setTranscriptApiKey",
+        "title": "Akosua: Set YouTube (TranscriptAPI) Key"
+      },
+      {
+        "command": "akosua.clearKeys",
+        "title": "Akosua: Clear All API Keys"
+      }
+    ],
+    "configuration": {
+      "title": "Akosua",
+      "properties": {
+        "akosua.plannerProvider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "default": "anthropic",
+          "description": "Model provider used for planning/review judgement."
+        },
+        "akosua.editorProvider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "default": "anthropic",
+          "description": "Model provider used for code edits."
+        },
+        "akosua.reviewerProvider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "openai"
+          ],
+          "default": "openai",
+          "description": "Model provider used to cross-review the other provider's work."
+        },
+        "akosua.plannerModel": {
+          "type": "string",
+          "default": "",
+          "description": "Planner model id (blank = provider default at integration time; set explicitly for reproducibility)."
+        },
+        "akosua.editorModel": {
+          "type": "string",
+          "default": "",
+          "description": "Editor model id (blank = provider default)."
+        },
+        "akosua.reviewerModel": {
+          "type": "string",
+          "default": "",
+          "description": "Reviewer model id (blank = provider default)."
+        },
+        "akosua.mcpServers": {
+          "type": "array",
+          "default": [],
+          "description": "External MCP servers (stdio), e.g. [{\"name\":\"github\",\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-github\"]}]. Tools appear as mcp_<name>_<tool>, read-only phases unless \"allowBuild\": true.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "command"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object"
+              },
+              "allowBuild": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        },
+        "akosua.personalRules": {
+          "type": "string",
+          "default": "",
+          "editPresentation": "multilineText",
+          "description": "Your standing instructions for the agent (all projects). Project-level AKOSUA_RULES.md adds on top. This is how Akosua never 'forgets' your rules between chats."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:core": "cd ../../akosua-core && npm run build",
+    "compile": "npm run build:core && tsc -p tsconfig.json",
+    "test": "npm run compile && tsc -p tsconfig.test.json && node --test out/test/"
+  },
+  "dependencies": {
+    "@akosua/core": "file:../../akosua-core"
+  }
+}

@@ -1,0 +1,203 @@
+import type { ChatMessage, ModelProvider, ToolCall } from "../providers/types.js";
+import type { Phase, ToolRegistry } from "./tools.js";
+
+/** Akosua's enforced workflow. Tool access is GATED by phase — an agent in
+ * "understand" physically cannot edit files. Advancement requires an explicit
+ * sign-off signal in the assistant output (or host UI), never silent skipping. */
+export const PHASES: Phase[] = ["understand", "research", "plan", "build", "verify"];
+export const PHASE_SIGNOFF: Record<Phase, string> = {
+  understand: "UNDERSTANDING COMPLETE:",
+  research: "RESEARCH COMPLETE:",
+  plan: "PLAN APPROVED:",
+  build: "BUILD COMPLETE:",
+  verify: "VERIFICATION COMPLETE:",
+};
+/** Sign-off detection is punctuation-tolerant (live lesson: gpt-4.1 writes
+ * "PLAN APPROVED." with a period). The marker stem must appear, followed by
+ * a colon, period, dash or end-of-phrase. */
+export function hasSignoff(text: string, phase: Phase): boolean {
+  const stem = PHASE_SIGNOFF[phase].replace(/:$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(stem + "\\s*[:.\u2014-]", "i").test(text) || new RegExp(stem + "\\s*$", "im").test(text);
+}
+
+export interface PhaseModelRoute { provider: ModelProvider; model: string; }
+/** Model routing (Settings -> Akosua): Planner drives Understand/Research/
+ * Plan (+Verify execution), Editor drives Build, Reviewer independently
+ * reviews the diff at the Build->Verify gate. Unset roles fall back to the
+ * agent's primary provider/model. Cross-vendor review (e.g. Claude builds,
+ * OpenAI reviews) is the recommended setup — a model marks its own homework
+ * less honestly than a rival does. */
+export interface ModelRouting { planner?: PhaseModelRoute; editor?: PhaseModelRoute; reviewer?: PhaseModelRoute; }
+export interface AgentConfig {
+  provider: ModelProvider; model: string;
+  systemPrompt: string; maxTurns?: number;
+  routing?: ModelRouting;
+}
+export type AgentEvent =
+  | { type: "phase"; phase: Phase }
+  | { type: "text"; delta: string }
+  | { type: "tool"; name: string; result: string }
+  | { type: "done"; phase: Phase }
+  | { type: "review"; verdict: "approved" | "changes_requested" | "unavailable"; text: string }
+  | { type: "cancelled"; phase: Phase };
+
+export class Agent {
+  phase: Phase = "understand";
+  private cancelled = false;
+  private phaseToolCount = 0;
+  private callStreak = new Map<string, number>();
+  private signoffNudges = 0;
+  private reviewRounds = 0;
+  private verificationAttempted = false;
+  private verifyGateBlocks = 0;
+  private reviewerPassed = false;
+  private routeFor(phase: Phase): PhaseModelRoute {
+    const r = this.cfg.routing;
+    if (phase === "build" && r?.editor) return r.editor;
+    if (r?.planner && phase !== "build") return r.planner;
+    return { provider: this.cfg.provider, model: this.cfg.model };
+  }
+  /** Cross-vendor review of the actual diff. Returns verdict + text.
+   * Reviewer gets NO tools: it judges evidence, it cannot touch code. */
+  private async runReview(taskText: string, buildSummary: string): Promise<{ verdict: "approved" | "changes_requested" | "unavailable"; text: string }> {
+    const reviewer = this.cfg.routing?.reviewer;
+    if (!reviewer) return { verdict: "unavailable", text: "No reviewer model configured." };
+    try {
+      const { reviewEvidenceSinceCheckpoint } = await import("../tools/git.js");
+      const evidence = await reviewEvidenceSinceCheckpoint(this.workspaceRoot).catch(() => "(diff evidence unavailable)");
+      let text = "";
+      for await (const ev of reviewer.provider.complete({
+        model: reviewer.model,
+        messages: [
+          { role: "system", content: "You are Akosua's independent Reviewer. A DIFFERENT model just finished the Build phase. Judge ONLY the evidence: the task, the builder's summary, and the real git diff. Look for: wrong files touched, API misuse, unproven claims, scope creep, broken contracts, missing error handling. Be specific and cite file/line where possible. End your review with EXACTLY one final line: 'REVIEW VERDICT: APPROVED' or 'REVIEW VERDICT: CHANGES REQUESTED'." },
+          { role: "user", content: `TASK:\n${taskText}\n\nBUILDER'S SUMMARY:\n${buildSummary}\n\nDIFF EVIDENCE:\n${evidence}` },
+        ],
+      })) { if (ev.type === "text") text += ev.delta; }
+      const verdict = /REVIEW VERDICT:\s*CHANGES REQUESTED/i.test(text) ? "changes_requested" : "approved";
+      return { verdict, text: text || "(reviewer returned no text)" };
+    } catch (e) { return { verdict: "unavailable", text: `Reviewer unavailable: ${(e as Error).message}` }; }
+  }
+  /** Max tool calls per phase before the agent is forced to summarise/sign off.
+   * Live-test lesson (gpt-4.1, 2026-10-18): without this, an agent can loop
+   * dozens of low-value searches inside one phase forever. */
+  static PHASE_TOOL_BUDGET = 20;
+  /** Host (UI Cancel button) calls this; the loop stops between turns/tools
+   * and reports a cancelled event. In-flight provider streams finish their
+   * current turn — no half-applied tool calls are started after cancel. */
+  cancel() { this.cancelled = true; }
+  history: ChatMessage[] = [];
+  constructor(private cfg: AgentConfig, private tools: ToolRegistry, private workspaceRoot: string) {
+    this.history.push({ role: "system", content: cfg.systemPrompt });
+  }
+  private taskText = "";
+  async *run(userText: string): AsyncIterable<AgentEvent> {
+    this.taskText = userText;
+    this.history.push({ role: "user", content: userText });
+    const maxTurns = this.cfg.maxTurns ?? 60;
+    for (let turn = 0; turn < maxTurns; turn++) {
+      if (this.cancelled) { yield { type: "cancelled", phase: this.phase }; return; }
+      yield { type: "phase", phase: this.phase };
+      let text = ""; const calls: ToolCall[] = [];
+      const budgetExhausted = this.phaseToolCount >= Agent.PHASE_TOOL_BUDGET;
+      if (budgetExhausted) this.history.push({ role: "user", content:
+        `You have used ${this.phaseToolCount} tool calls in the "${this.phase}" phase (budget ${Agent.PHASE_TOOL_BUDGET}). ` +
+        `Tools are now disabled for this turn. Summarise what you have learned and emit your phase sign-off (${PHASE_SIGNOFF[this.phase]} ...) or state the exact blocker. Do not request more tools.` });
+      const route = this.routeFor(this.phase);
+      for await (const ev of route.provider.complete({
+        model: route.model, messages: this.history,
+        tools: budgetExhausted ? undefined : this.tools.definitionsFor(this.phase),
+      })) {
+        if (ev.type === "text") { text += ev.delta; yield { type: "text", delta: ev.delta }; }
+        if (ev.type === "toolCall") calls.push(ev.call);
+      }
+      this.history.push({ role: "assistant", content: text, ...(calls.length ? { toolCalls: calls } : {}) });
+
+      if (!calls.length) {
+        // REVIEWER GATE: a Build sign-off does not advance until the
+        // independent Reviewer (if configured) approves the real diff.
+        // CHANGES REQUESTED sends the agent back into Build with the
+        // findings (max 2 rounds, then Verify proceeds with concerns noted
+        // so the run can never loop forever).
+        if (this.phase === "build" && !this.reviewerPassed && this.cfg.routing?.reviewer && hasSignoff(text, "build")) {
+          const review = await this.runReview(this.taskText, text);
+          yield { type: "review", verdict: review.verdict, text: review.text };
+          if (review.verdict === "changes_requested" && this.reviewRounds < 2) {
+            this.reviewRounds++;
+            this.history.push({ role: "user", content:
+              `CROSS-MODEL REVIEW (round ${this.reviewRounds}/2) — CHANGES REQUESTED. You are still in Build. Fix these findings, then emit "${PHASE_SIGNOFF.build}" again:\n${review.text}` });
+            continue;
+          }
+          this.reviewerPassed = true;
+          if (review.verdict === "changes_requested") this.history.push({ role: "user", content:
+            `CROSS-MODEL REVIEW: still CHANGES REQUESTED after 2 rounds. Proceed to Verify and report these unresolved concerns honestly in your verification summary:\n${review.text}` });
+          else if (review.verdict === "unavailable") this.history.push({ role: "user", content:
+            `Note: independent review could not run (${review.text}). Proceed to Verify; do not claim the work was reviewed.` });
+          else this.history.push({ role: "user", content: `CROSS-MODEL REVIEW: APPROVED. Proceed to Verify.\n${review.text.slice(0, 2000)}` });
+        }
+        // Advance through EVERY sign-off marker stated in this message, in
+        // order (live lesson: a model may complete Understand+Research+Plan
+        // in one strong message; honouring only the first strands it).
+        const before = this.phase;
+        while (this.phase !== "verify" && hasSignoff(text, this.phase)) {
+          this.phase = PHASES[PHASES.indexOf(this.phase) + 1];
+          this.phaseToolCount = 0;
+        }
+        if (this.phase === "verify" && hasSignoff(text, "verify")) {
+          // VERIFY GATE (loop-level, not prompt-level): no sign-off is
+          // accepted until run_verification has actually executed in this
+          // phase. The result may PASS, FAIL or COULD-NOT-RUN — all are
+          // acceptable evidence; silence is not. Blocked twice, then the
+          // run ends flagged rather than looping forever.
+          if (!this.verificationAttempted && this.verifyGateBlocks < 2) {
+            this.verifyGateBlocks++;
+            this.history.push({ role: "user", content:
+              `VERIFICATION REJECTED (${this.verifyGateBlocks}/2): you signed off without running the project's checks. Call the run_verification tool NOW, then sign off again reporting its actual PASS / FAIL / COULD-NOT-RUN outcome honestly.` });
+            continue;
+          }
+          if (!this.verificationAttempted) this.history.push({ role: "user", content:
+            "Run ended WITHOUT verification evidence: run_verification was never executed. Any summary of this run must state that correctness is UNVERIFIED." });
+          yield { type: "done", phase: this.phase }; return; }
+        if (this.phase !== before) continue; // advanced: keep working in the new phase
+        // No sign-off for the CURRENT phase: nudge and continue (live lesson:
+        // models sometimes summarise without the marker, or repeat an earlier
+        // phase's marker). Dying silently here strands the whole task.
+        if (this.signoffNudges < 3) {
+          this.signoffNudges++;
+          this.history.push({ role: "user", content:
+            `You ended that message without completing the "${this.phase}" phase. Continue working in "${this.phase}" now: use its tools if you still need evidence, then finish with the exact sign-off "${PHASE_SIGNOFF[this.phase]}" followed by your summary. (Nudge ${this.signoffNudges}/3)` });
+          continue;
+        }
+        yield { type: "done", phase: this.phase }; return;
+      }
+      for (const call of calls) {
+        if (this.cancelled) { yield { type: "cancelled", phase: this.phase }; return; }
+        this.phaseToolCount++;
+        let args: Record<string, unknown> = {};
+        try { args = JSON.parse(call.arguments || "{}"); } catch { /* tool receives {} and errors instructively */ }
+        // Repeat guard: same tool+args 3x is a loop, not research.
+        const key = call.name + ":" + call.arguments;
+        const streak = (this.callStreak.get(key) ?? 0) + 1;
+        this.callStreak.clear(); this.callStreak.set(key, streak);
+        const result = streak >= 3
+          ? `Blocked: you have called ${call.name} with identical arguments ${streak} times. Repeating it will not change the result. Use a different query/tool, or summarise and sign off this phase.`
+          : await this.tools.run(call.name, args, { workspaceRoot: this.workspaceRoot }, this.phase);
+        yield { type: "tool", name: call.name, result };
+        if (this.phase === "verify" && call.name === "run_verification") this.verificationAttempted = true;
+        this.history.push({ role: "tool", content: result, toolCallId: call.id, name: call.name });
+      }
+    }
+    yield { type: "done", phase: this.phase };
+  }
+}
+
+export const AKOSUA_SYSTEM_PROMPT = `You are Akosua, a personal AI coding agent inside the user's own IDE.
+You work in STRICT phases: Understand -> Research -> Plan -> Build -> Verify.
+Rules (non-negotiable):
+1. NEVER GUESS. The codebase is the source of truth. Prove APIs exist (codebase, installed package types, or docs) before using them.
+2. In Understand, read before you reason. State "${PHASE_SIGNOFF.understand}" followed by what exists and what the task touches when done.
+3. In Research, check Context7 docs first for libraries, Firecrawl for online implementations/solutions, YouTube knowledge for video ideas (verify video ideas before use). State "${PHASE_SIGNOFF.research}" with your sources, or why no external research is needed.
+4. In Plan, write the files, approach, risks and how success will be proven. State "${PHASE_SIGNOFF.plan}" when the plan is final.
+5. In Build, edit surgically. In Verify, run the project's real checks and show evidence; for bugs reproduce first. Never claim done without evidence.
+6. HONEST VERIFICATION: if a check COULD NOT RUN (command not found, dependencies not installed, no test setup), say exactly that and state that correctness is UNKNOWN — never write "no errors detected", "should work" or equivalent. A check that did not run proves nothing. Report PASS, FAIL and COULD-NOT-RUN as three separate outcomes.
+7. At the end of Build, an independent Reviewer model reads your actual git diff (not your summary) and can send you back with findings. Write build summaries that match the diff exactly — discrepancies are treated as defects.
+Truth hierarchy: test/run output > codebase > lockfiles/installed types > version-matched official docs (Context7/Firecrawl) > community ideas (YouTube/Stack Overflow/blogs — leads only).`;

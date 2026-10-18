@@ -1,0 +1,75 @@
+# Akosua — build the Windows installer on GitHub's runners.
+# You download ONE .exe (Actions artifact / Release). Nothing to install locally.
+#
+# Push THIS repo (the akosua/ folder) to GitHub, then:
+#   Actions tab -> "Build Akosua for Windows" -> Run workflow.
+# First run is the experiment: watch the disk + timing in the log. See GITHUB_BUILD.md.
+name: Build Akosua for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner label (windows-2022 = standard; change only if you use larger/third-party runners)"
+        required: false
+        default: "windows-2022"
+      smoke_only:
+        description: "Smoke test only (clone+rebrand+install deps, no installer — faster/cheaper)"
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # needed only to attach the installer to a Release on tag pushes
+
+jobs:
+  build:
+    name: Windows installer
+    runs-on: ${{ inputs.runner || 'windows-2022' }}
+    timeout-minutes: 350
+    steps:
+      - name: Checkout Akosua overlay (this repo)
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24.18.0 (exact — pinned VS Code .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.18.0"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Runner report (so failures are diagnosable, not mysterious)
+        shell: pwsh
+        run: |
+          Write-Host "CPU: $env:NUMBER_OF_PROCESSORS"
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}}, @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}}
+          node --version; python --version; git --version
+
+      - name: Build Akosua installer
+        shell: pwsh
+        env:
+          SMOKE: ${{ inputs.smoke_only }}
+        run: |
+          $args = @()
+          if ($env:SMOKE -eq 'true') { $args += '-SkipInstaller' }
+          .\scripts\ci-build-windows.ps1 @args
+
+      - name: Upload installer (artifact — download from the run page)
+        if: ${{ inputs.smoke_only != true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Akosua-Windows-Installer
+          path: vscode-src/.build/win32-x64/user-setup/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach installer to Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vscode-src/.build/win32-x64/user-setup/*.exe
