@@ -12,18 +12,40 @@ export class OpenAIProvider implements ModelProvider {
       ? { role: "tool", tool_call_id: m.toolCallId, content: m.content }
       : { role: m.role, content: m.content || null,
           ...(m.toolCalls?.length ? { tool_calls: m.toolCalls.map(tc => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })) } : {}) });
-    const res = await this.fetchFn("https://api.openai.com/v1/chat/completions", {
+    // GPT-6-class models reason by default, and Chat Completions rejects
+    // function tools combined with reasoning effort ("Function tools with
+    // reasoning_effort are not supported ... set reasoning_effort to
+    // 'none'"). Akosua always calls with tools, so pin it off explicitly.
+    // Token limit: GPT-5/6-class models REQUIRE max_completion_tokens and
+    // reject max_tokens (400 unsupported_parameter). Parameter negotiation:
+    // on a 400 that names an unsupported parameter, swap/drop exactly that
+    // parameter and retry (max 3 attempts) — model families differ and
+    // Akosua never guesses which generation it is talking to.
+    const payload: Record<string, unknown> = { model: req.model, messages,
+      ...(req.maxTokens ? { max_completion_tokens: req.maxTokens } : {}),
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.tools?.length ? { reasoning_effort: "none" } : {}),
+      tools: req.tools?.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
+      stream: true };
+    const post = () => this.fetchFn("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      // GPT-6-class models reason by default, and Chat Completions rejects
-      // function tools combined with reasoning effort ("Function tools with
-      // reasoning_effort are not supported ... set reasoning_effort to
-      // 'none'"). Akosua always calls with tools, so pin it off explicitly.
-      body: JSON.stringify({ model: req.model, messages, max_tokens: req.maxTokens, temperature: req.temperature,
-        ...(req.tools?.length ? { reasoning_effort: "none" } : {}),
-        tools: req.tools?.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
-        stream: true }),
+      body: JSON.stringify(payload),
     });
+    let res = await post();
+    for (let attempt = 0; !res.ok && res.status === 400 && attempt < 3; attempt++) {
+      const errText = await res.text();
+      let adjusted = false;
+      if (errText.includes("max_completion_tokens") && payload.max_completion_tokens !== undefined) {
+        payload.max_tokens = payload.max_completion_tokens; delete payload.max_completion_tokens; adjusted = true;
+      } else if (errText.includes("max_tokens") && payload.max_tokens !== undefined) {
+        payload.max_completion_tokens = payload.max_tokens; delete payload.max_tokens; adjusted = true;
+      }
+      if (errText.includes("temperature") && "temperature" in payload) { delete payload.temperature; adjusted = true; }
+      if (errText.includes("reasoning_effort") && "reasoning_effort" in payload) { delete payload.reasoning_effort; adjusted = true; }
+      if (!adjusted) throw new Error(`OpenAI 400: ${errText}`);
+      res = await post();
+    }
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
     const dec = new TextDecoder(); let buf = "";
     const partial: Record<number, { id: string; name: string; args: string }> = {};
