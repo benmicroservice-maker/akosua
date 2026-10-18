@@ -55,9 +55,8 @@ jobs:
         env:
           SMOKE: ${{ inputs.smoke_only }}
         run: |
-          $args = @()
-          if ($env:SMOKE -eq 'true') { $args += '-SkipInstaller' }
-          .\scripts\ci-build-windows.ps1 @args
+          if ($env:SMOKE -eq 'true') { .\scripts\ci-build-windows.ps1 -SkipInstaller }
+          else { .\scripts\ci-build-windows.ps1 }
 
       - name: Upload installer (artifact — download from the run page)
         if: ${{ inputs.smoke_only != true }}

@@ -19,7 +19,9 @@ if ($env:GITHUB_WORKSPACE -and -not $PSBoundParameters.ContainsKey("VsCodeDir"))
 
 function Step([string]$Msg) { Write-Host ""; Write-Host "== $Msg ==" -ForegroundColor Cyan }
 function Disk([string]$Where) {
-  $d = Get-PSDrive -Name ([System.IO.Path]::GetPathRoot($VsCodeDir).Substring(0,1))
+  $root = [System.IO.Path]::GetPathRoot($VsCodeDir)
+  if (-not $root) { Write-Host "Disk at $Where: (relative path, skipped)" -ForegroundColor DarkGray; return }
+  $d = Get-PSDrive -Name $root.Substring(0,1)
   Write-Host ("Disk at {0}: {1:N1} GB free" -f $Where, ($d.Free / 1GB)) -ForegroundColor DarkGray
 }
 
