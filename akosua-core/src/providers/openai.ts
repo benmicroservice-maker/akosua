@@ -15,7 +15,12 @@ export class OpenAIProvider implements ModelProvider {
     const res = await this.fetchFn("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      // GPT-6-class models reason by default, and Chat Completions rejects
+      // function tools combined with reasoning effort ("Function tools with
+      // reasoning_effort are not supported ... set reasoning_effort to
+      // 'none'"). Akosua always calls with tools, so pin it off explicitly.
       body: JSON.stringify({ model: req.model, messages, max_tokens: req.maxTokens, temperature: req.temperature,
+        ...(req.tools?.length ? { reasoning_effort: "none" } : {}),
         tools: req.tools?.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })),
         stream: true }),
     });
