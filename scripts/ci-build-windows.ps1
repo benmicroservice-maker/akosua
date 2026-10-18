@@ -76,6 +76,9 @@ else {
   Step "Compiling Akosua app (gulp vscode-win32-x64-min — the long compile)"
   Push-Location $VsCodeDir
   npm run gulp -- vscode-win32-x64-min
+  # tools\inno_updater.exe is produced by THIS task, not by -min; code.iss requires tools\* to exist.
+  Step "Preparing inno updater (gulp vscode-win32-x64-inno-updater)"
+  npm run gulp -- vscode-win32-x64-inno-updater
   Step "Packaging Windows installer (gulp vscode-win32-x64-user-setup)"
   npm run gulp -- vscode-win32-x64-user-setup
   Pop-Location

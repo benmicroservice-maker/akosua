@@ -139,6 +139,7 @@ try {
     if (Should-Run 6) {
       Log "Stage 6: building Windows user-setup installer (long)..."
       Push-Location $VsCode
+      npm run gulp -- vscode-win32-x64-inno-updater
       npm run gulp -- vscode-win32-x64-user-setup
       Pop-Location
       Log "Installer output: look under $VsCode\.build\win32-x64\user-setup\ for VSCodeUserSetup / Akosua setup .exe"
