@@ -65,11 +65,25 @@ npm install --no-audit --no-fund
 Pop-Location
 Disk "after npm install"
 
-# 5. Compile + package the Windows user-setup installer
+# 4b. Embed @akosua/core INSIDE the extension (real copy, not the file:
+# symlink). VS Code's extension packager globs node_modules/** of built-in
+# extensions; a symlink pointing OUTSIDE extensions/ risks being dropped,
+# which would leave the packaged Akosua unable to load its core.
+Step "Embedding @akosua/core into the extension"
+$corePkg = Join-Path $VsCodeDir "extensions\akosua\node_modules\@akosua\core"
+New-Item -ItemType Directory -Force -Path $corePkg | Out-Null
+Copy-Item -Recurse -Force (Join-Path $VsCodeDir "akosua-core\dist") (Join-Path $corePkg "dist")
+Copy-Item -Force (Join-Path $VsCodeDir "akosua-core\package.json") (Join-Path $corePkg "package.json")
+
+# 5. Compile the app, THEN package the installer. The -user-setup gulp task
+# does NOT compile anything: it Inno-packages the ../VSCode-win32-x64 folder
+# produced by the vscode-win32-x64-min task (verified in build/gulpfile.*).
 if ($SkipInstaller) { Step "SkipInstaller set — stopping after dependency install (smoke test mode)" }
 else {
-  Step "Building Windows installer (gulp vscode-win32-x64-user-setup)"
+  Step "Compiling Akosua app (gulp vscode-win32-x64-min — the long compile)"
   Push-Location $VsCodeDir
+  npm run gulp -- vscode-win32-x64-min
+  Step "Packaging Windows installer (gulp vscode-win32-x64-user-setup)"
   npm run gulp -- vscode-win32-x64-user-setup
   Pop-Location
   $setupDir = Join-Path $VsCodeDir ".build\win32-x64\user-setup"
