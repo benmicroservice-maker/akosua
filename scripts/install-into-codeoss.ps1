@@ -6,6 +6,16 @@ $src = Split-Path -Parent $PSScriptRoot   # ...\akosua  (contains extensions\, a
 
 Write-Host "Copying Akosua extension -> $VsCodePath\extensions\akosua"
 Copy-Item -Recurse -Force "$src\extensions\akosua" "$VsCodePath\extensions\akosua"
+# Fork patch: VS Code installs extension deps ONLY for dirs hardcoded in
+# build/npm/dirs.ts. Register extensions/akosua or its esbuild toolchain and
+# @akosua/core dependency never get installed by the root npm install.
+$dirsFile = "$VsCodePath\build\npm\dirs.ts"
+$dirs = Get-Content $dirsFile -Raw
+if ($dirs -notmatch "extensions/akosua") {
+  $dirs = $dirs -replace "'extensions/configuration-editing',", "'extensions/akosua',`n`t'extensions/configuration-editing',"
+  Set-Content $dirsFile $dirs -NoNewline
+  Write-Host "Patched build/npm/dirs.ts (+ extensions/akosua)"
+}
 Write-Host "Copying @akosua/core -> $VsCodePath\akosua-core  (extension depends on file:../../akosua-core)"
 Copy-Item -Recurse -Force "$src\akosua-core" "$VsCodePath\akosua-core"
 # strip dev artefacts from the copies

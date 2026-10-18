@@ -1,14 +1,15 @@
 import * as vscode from "vscode";
-// @akosua/core is ESM; VS Code extension hosts are CommonJS, so the core is
-// loaded with a dynamic import at activation (no static ESM import here).
-// Minimal structural mirrors of the core interfaces (kept in sync with
-// @akosua/core/src/secrets.ts + providers/types.ts). The extension avoids a
-// static type import so CommonJS extension compilation never fights ESM.
+// @akosua/core is bundled INTO this extension at build time by esbuild
+// (see esbuild.mts): VS Code's product packager cannot resolve a runtime
+// dependency that lives outside extensions/, so the core travels inside
+// dist/extension.js. The module is declared in core-shim.d.ts (untyped here
+// by design — the core's own test suite owns its correctness).
+import * as coreBundled from "@akosua/core";
 interface SecretStore { get(k: string): Promise<string | undefined>; set(k: string, v: string): Promise<void>; delete(k: string): Promise<void>; }
 interface ChatMessage { role: string; content: string; }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CoreModule = any;
-let core: CoreModule;
+const core: CoreModule = coreBundled;
 import { PROVIDERS, specFor, maskedStatus, parseMcpServers, type ProviderId } from "./config.js";
 
 /** Bridges VS Code SecretStorage (Windows Credential Manager on Windows)
@@ -126,7 +127,6 @@ class AkosuaView implements vscode.WebviewViewProvider {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-  core = await import("@akosua/core");
   store = new VsCodeSecretStore(context.secrets);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("akosua.chat", new AkosuaView()),

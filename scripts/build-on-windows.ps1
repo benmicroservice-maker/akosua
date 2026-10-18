@@ -122,12 +122,7 @@ try {
     npm install
     npm run build
     Pop-Location
-    Log "Stage 5b: embedding @akosua/core into the extension (packaging safety)..."
-    $corePkg = Join-Path $VsCode "extensions\akosua\node_modules\@akosua\core"
-    New-Item -ItemType Directory -Force -Path $corePkg | Out-Null
-    Copy-Item -Recurse -Force (Join-Path $VsCode "akosua-core\dist") (Join-Path $corePkg "dist")
-    Copy-Item -Force (Join-Path $VsCode "akosua-core\package.json") (Join-Path $corePkg "package.json")
-    Log "Stage 5c: npm install at repo root (picks up the new built-in extension)..."
+    Log "Stage 5b: npm install at repo root (picks up the new built-in extension)..."
     Push-Location $VsCode
     npm install
     Pop-Location
