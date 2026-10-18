@@ -1,6 +1,6 @@
 {
   "name": "@akosua/core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Akosua core: model providers, phase-gated agent loop, context engine, native research tools",
   "type": "module",

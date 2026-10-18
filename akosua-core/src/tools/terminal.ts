@@ -1,3 +1,4 @@
+import { classifyCommand } from "../agent/permissions.js";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Tool } from "../agent/tools.js";
 
@@ -91,6 +92,13 @@ export const terminalTool = (terminals: Map<string, PersistentTerminal> = new Ma
   // happens through the read-only codebase tools.
   phases: ["build", "verify"],
   async run(a, ctx) {
+    // Permission tier: destructive commands need the human, via the host.
+    const cls = classifyCommand(String(a.command ?? ""));
+    if (cls.tier === "destructive") {
+      if (!ctx.confirm) return `Blocked (permission tier): this command was classified destructive (${cls.why}) and no confirmation UI is attached. It was NOT run. Ask the user to run it manually, or propose a safer alternative (e.g. git stash instead of reset --hard, targeted deletes instead of rm -rf).`;
+      const ok = await ctx.confirm(`Akosua agent wants to run a destructive command (${cls.why}):\n\n${String(a.command)}\n\nAllow it?`);
+      if (!ok) return `Blocked by the user: the destructive command (${cls.why}) was NOT run. Continue with a safer approach or ask what they would prefer.`;
+    }
     const name = String(a.session ?? "main");
     if (!terminals.has(name)) terminals.set(name, new PersistentTerminal(undefined, ctx.workspaceRoot));
     return terminals.get(name)!.runText(String(a.command));
