@@ -52,5 +52,5 @@ if "extensionsGallery" in d:
     }
 
 p.write_text(json.dumps(d, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
-print("product.json rebranded to Akosua ✔")
+print("product.json rebranded to Akosua [OK]")
 print("NOTE: icons (resources/win32/*.ico, darwin, linux) and win32 GUIDs still need Akosua artwork/GUIDs before release — tracked in PROGRESS_TRACKER.")
