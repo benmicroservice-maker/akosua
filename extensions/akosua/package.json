@@ -1,7 +1,7 @@
 {
   "name": "akosua",
   "displayName": "Akosua",
-  "description": "Akosua — personal AI coding agent. Understand -> Research -> Plan -> Build -> Verify. Never guess.",
+  "description": "Akosua \u2014 personal AI coding agent. Understand -> Research -> Plan -> Build -> Verify. Never guess.",
   "version": "0.1.0",
   "publisher": "akosua",
   "private": true,

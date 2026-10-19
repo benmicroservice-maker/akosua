@@ -40,6 +40,20 @@ export class OpenAIProvider implements ModelProvider {
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify(payload),
     });
+    let res = await post();
+    for (let attempt = 0; !res.ok && res.status === 400 && attempt < 3; attempt++) {
+      const errText = await res.text();
+      let adjusted = false;
+      if (errText.includes("max_completion_tokens") && payload.max_completion_tokens !== undefined) {
+        payload.max_tokens = payload.max_completion_tokens; delete payload.max_completion_tokens; adjusted = true;
+      } else if (errText.includes("max_tokens") && payload.max_tokens !== undefined) {
+        payload.max_completion_tokens = payload.max_tokens; delete payload.max_tokens; adjusted = true;
+      }
+      if (errText.includes("temperature") && "temperature" in payload) { delete payload.temperature; adjusted = true; }
+      if (errText.includes("reasoning_effort") && "reasoning_effort" in payload) { delete payload.reasoning_effort; adjusted = true; }
+      if (!adjusted) throw new Error(`OpenAI 400: ${errText}`);
+      res = await post();
+    }
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
     const dec = new TextDecoder(); let buf = "";
     const calls = new Map<string, { id: string; name: string; arguments: string }>();
