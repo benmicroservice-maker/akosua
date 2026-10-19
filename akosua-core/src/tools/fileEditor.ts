@@ -10,6 +10,35 @@ function safe(root: string, p: string): string {
   if (abs !== r && !abs.startsWith(r + path.sep)) throw new Error(`Path escapes workspace: ${p}`);
   return abs;
 }
+
+/** Tiered match for str_replace (Fast-Apply lesson): exact first; then a
+ * line-wise whitespace-tolerant match (indentation/trailing drift); the
+ * replacement text lands exactly as the model wrote it. Ambiguity at any tier
+ * is an error, never a guess. Returns [startIdx, endIdxExclusive] in `content`. */
+export function findReplaceRange(content: string, old: string): { start: number; end: number; tier: string } | { error: string } {
+  const idx = content.indexOf(old);
+  if (idx >= 0) {
+    if (content.indexOf(old, idx + 1) >= 0) return { error: "old_str occurs more than once. Include more surrounding context to make it unique." };
+    return { start: idx, end: idx + old.length, tier: "exact" };
+  }
+  const norm = (s: string) => s.split("\n").map(l => l.trim());
+  const contentLines = content.split("\n"); const oldLines = norm(old);
+  while (oldLines.length && oldLines[oldLines.length - 1] === "") oldLines.pop();
+  while (oldLines.length && oldLines[0] === "") oldLines.shift();
+  if (!oldLines.length) return { error: "old_str is empty after trimming." };
+  const hits: number[] = [];
+  outer: for (let i = 0; i + oldLines.length <= contentLines.length; i++) {
+    for (let j = 0; j < oldLines.length; j++) if (contentLines[i + j].trim() !== oldLines[j]) continue outer;
+    hits.push(i);
+  }
+  if (hits.length > 1) return { error: "old_str matches multiple locations once whitespace is ignored. Include more surrounding context." };
+  if (!hits.length) return { error: "not found (tried exact and whitespace-tolerant match). View the file and copy the exact text." };
+  const startLine = hits[0];
+  const starts: number[] = [0];
+  for (let i = 0; i < contentLines.length; i++) starts.push(starts[i] + contentLines[i].length + 1);
+  return { start: starts[startLine], end: starts[startLine + oldLines.length] - 1, tier: "whitespace-tolerant" };
+}
+
 /** Surgical file editor (nanoclaude lesson): view/create/insert/str_replace. */
 export const fileEditorTool: Tool = {
   definition: { name: "file_editor", description:
@@ -36,10 +65,18 @@ export const fileEditorTool: Tool = {
     switch (a.command) {
       case "view": {
         const lines = (await fs.readFile(abs, "utf8")).split("\n");
-        let [s, e] = Array.isArray(a.view_range) ? a.view_range as number[] : [1, lines.length];
+        const ranged = Array.isArray(a.view_range);
+        let [s, e] = ranged ? a.view_range as number[] : [1, lines.length];
         s = Math.max(1, Math.floor(s) || 1);               // tolerate 0-indexed callers
         e = !e || e < s ? lines.length : Math.min(Math.floor(e), lines.length);
-        return lines.slice(s - 1, e).map((l, i) => `${s + i}: ${l}`).join("\n") || "(empty file)";
+        // Context hygiene: an unbounded view of a huge file burns the
+        // window for nothing. Cap at 400 lines and say exactly how to
+        // page — the model asks for the range it actually needs.
+        const CAP = 400;
+        const capped = e - s + 1 > CAP;
+        if (capped) e = s + CAP - 1;
+        const body = lines.slice(s - 1, e).map((l, i) => `${s + i}: ${l}`).join("\n") || "(empty file)";
+        return capped ? `${body}\n…[view capped: lines ${s}-${e} of ${lines.length}. Call view again with view_range [${e + 1}, ${Math.min(lines.length, e + CAP)}] for the next chunk — do not re-read what you have.]` : body;
       }
       case "create": {
         await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -55,11 +92,10 @@ export const fileEditorTool: Tool = {
       case "str_replace": {
         const content = await fs.readFile(abs, "utf8"); const old = String(a.old_str ?? "");
         if (!old) return "Error: old_str is empty. Provide the exact unique text to replace.";
-        const idx = content.indexOf(old);
-        if (idx < 0) return `Error: old_str not found in ${a.path}. View the file and copy the exact text, including whitespace.`;
-        if (content.indexOf(old, idx + 1) >= 0) return `Error: old_str occurs more than once in ${a.path}. Include more surrounding context to make it unique.`;
-        await fs.writeFile(abs, content.slice(0, idx) + String(a.new_str ?? "") + content.slice(idx + old.length));
-        return `Replaced text in ${a.path}`;
+        const m = findReplaceRange(content, old);
+        if ("error" in m) return `Error: old_str ${m.error} (${a.path})`;
+        await fs.writeFile(abs, content.slice(0, m.start) + String(a.new_str ?? "") + content.slice(m.end));
+        return `Replaced text in ${a.path}${m.tier === "exact" ? "" : " (matched with whitespace tolerance — the file's drift differed from your old_str; your new_str was applied verbatim)"}`;
       }
       default: return `Error: unknown command "${a.command}". Use view|create|insert|str_replace.`;
     }

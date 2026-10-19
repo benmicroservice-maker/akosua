@@ -29,7 +29,7 @@ test("phase gate: edit tool is BLOCKED in understand phase, allowed after sign-o
   const agent = new Agent({ provider: scripted([
     { text: "Reading first. UNDERSTANDING COMPLETE: repo is empty" },
     { text: "No external libs. RESEARCH COMPLETE: none needed" },
-    { text: "Make a.txt. PLAN APPROVED: create a.txt" },
+    { text: "Make a.txt. PLAN COMPLETE: create a.txt" },
     { tool: { name: "file_editor", args: { command: "create", path: "a.txt", file_text: "hello akosua" } } },
     { text: "BUILD COMPLETE: a.txt created" },
     { text: "VERIFICATION COMPLETE: file exists (see tool output)" },
@@ -86,7 +86,7 @@ test("multi-signoff in ONE message advances through phases (live-test regression
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "akosua-multi-"));
   const reg = new ToolRegistry(); reg.register(fileEditorTool);
   const agent = new Agent({ provider: scripted([
-    { text: "Read it. UNDERSTANDING COMPLETE: tiny project. RESEARCH COMPLETE: no external APIs. PLAN APPROVED: create b.txt" },
+    { text: "Read it. UNDERSTANDING COMPLETE: tiny project. RESEARCH COMPLETE: no external APIs. PLAN COMPLETE: create b.txt" },
     { tool: { name: "file_editor", args: { command: "create", path: "b.txt", file_text: "multi" } } },
     { text: "BUILD COMPLETE: b.txt" },
     { text: "VERIFICATION COMPLETE: file written" },

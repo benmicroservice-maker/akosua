@@ -51,6 +51,9 @@ Step "Rebranding to Akosua"
 python (Join-Path $OverlayDir "scripts\rebrand_to_akosua.py") $VsCodeDir
 Step "Installing Akosua extension + core into the fork"
 & (Join-Path $OverlayDir "scripts\install-into-codeoss.ps1") -VsCodePath $VsCodeDir
+python (Join-Path $OverlayDir "fork\apply_fork.py") $VsCodeDir
+if ($LASTEXITCODE -ne 0) { throw "fork patch failed" }
+Write-Host "[akosua-ci] fork patch set applied (native UI)"
 
 # 3. Build @akosua/core (the extension loads it at runtime)
 Step "Building @akosua/core"
