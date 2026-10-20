@@ -9,3 +9,6 @@ vscode-src/
 akosua-build-state.json
 .akosua/research-cache.json
 __pycache__/
+
+# deliverable bundles never enter the repo
+*.bundle
