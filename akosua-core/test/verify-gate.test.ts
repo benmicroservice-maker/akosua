@@ -16,7 +16,7 @@ test("verify gate: VERIFICATION sign-off is rejected until run_verification actu
   };
   const registry = new ToolRegistry(); registry.register(verifyTool);
   const turns: Array<{ text?: string; tool?: string }> = [
-    { text: "UNDERSTANDING COMPLETE: x" }, { text: "RESEARCH COMPLETE: x" }, { text: "PLAN APPROVED: x" },
+    { text: "UNDERSTANDING COMPLETE: x" }, { text: "RESEARCH COMPLETE: x" }, { text: "PLAN COMPLETE: x" },
     { text: "BUILD COMPLETE: x" },
     { text: "VERIFICATION COMPLETE: trust me, it works" },
     { tool: "run_verification" },
@@ -29,7 +29,7 @@ test("verify gate: VERIFICATION sign-off is rejected until run_verification actu
     if (turn.tool) yield { type: "toolCall", call: { id: "c" + i, name: turn.tool, arguments: "{}" } };
     yield { type: "done", stopReason: "stop" };
   } };
-  const agent = new Agent({ provider, model: "m", systemPrompt: "test" }, registry, root);
+  const agent = new Agent({ provider, model: "m", systemPrompt: "test", lane: "act" }, registry, root);
   let done = "";
   for await (const e of agent.run("task")) if (e.type === "done") done = e.phase;
   assert.equal(done, "verify");

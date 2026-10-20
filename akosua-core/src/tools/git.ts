@@ -97,3 +97,32 @@ export async function reviewEvidenceSinceCheckpoint(root: string, maxChars = 120
   const untracked = status.split("\n").filter(l => l.startsWith("??")).map(l => l.slice(3).trim()).filter(Boolean);
   return `Checkpoint: ${ref}\nChanged (stat):\n${stat || "(none)"}\nUntracked new files: ${untracked.join(", ") || "(none)"}\nDiff (truncated):\n${(diff || "(no tracked diff)").slice(0, maxChars)}`;
 }
+
+/** Change-set review (UI-3/C1): structured diff data for the native UI and
+ * inline decorations — the model and user review the same evidence. */
+export interface ChangedFile { path: string; status: string; }
+export async function changedFilesSinceCheckpoint(root: string, ref: string): Promise<ChangedFile[]> {
+  const out = await git(root, ["diff", "--name-status", ref, "--", "."]);
+  return out.split("\n").filter(Boolean).map(l => { const [status, ...rest] = l.split("\t"); return { status: status.trim(), path: rest.join("\t").trim() }; });
+}
+export async function fileDiffSinceCheckpoint(root: string, ref: string, file: string): Promise<string> {
+  return git(root, ["diff", ref, "--", file]);
+}
+export interface DiffLine { type: "context" | "add" | "del"; text: string; newLine?: number; oldLine?: number; }
+export interface DiffHunk { oldStart: number; newStart: number; lines: DiffLine[]; }
+export interface FileDiff { file: string; hunks: DiffHunk[]; }
+/** Pure unified-diff parser (no I/O) — unit-tested directly. */
+export function parseUnifiedDiff(patch: string): FileDiff[] {
+  const files: FileDiff[] = [];
+  let cur: FileDiff | undefined; let hunk: DiffHunk | undefined; let nl = 0, ol = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) { cur = { file: line.split(" b/")[1] ?? line, hunks: [] }; files.push(cur); hunk = undefined; continue; }
+    const m = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (m && cur) { hunk = { oldStart: Number(m[1]), newStart: Number(m[2]), lines: [] }; cur.hunks.push(hunk); ol = hunk.oldStart; nl = hunk.newStart; continue; }
+    if (!hunk) continue;
+    if (line.startsWith("+") && !line.startsWith("+++")) hunk.lines.push({ type: "add", text: line.slice(1), newLine: nl++ });
+    else if (line.startsWith("-") && !line.startsWith("---")) hunk.lines.push({ type: "del", text: line.slice(1), oldLine: ol++ });
+    else if (line.startsWith(" ")) hunk.lines.push({ type: "context", text: line.slice(1), newLine: nl++, oldLine: ol++ });
+  }
+  return files;
+}

@@ -1,6 +1,9 @@
 import type { ToolDefinition } from "../providers/types.js";
 
-export interface ToolContext { workspaceRoot: string; signal?: AbortSignal; }
+export interface ToolContext { workspaceRoot: string; signal?: AbortSignal;
+  /** Host permission hook (permission tiers): destructive actions ask the
+   * HUMAN via the host UI. Undefined = deny destructive by default. */
+  confirm?: (question: string) => Promise<boolean>; }
 export interface Tool {
   definition: ToolDefinition;
   /** Phases in which this tool may run. Enforced by the agent loop. */
@@ -20,8 +23,8 @@ export class ToolRegistry {
     const t = this.tools.get(name);
     if (!t) return `Error: unknown tool "${name}". Available tools are listed in your tool definitions. Use one of those.`;
     if (!t.phases.includes(phase))
-      return `Error: tool "${name}" is NOT available in the "${phase}" phase. ` +
-        `Akosua enforces Understand -> Research -> Plan -> Build -> Verify. Finish the current phase first.`;
+      return `Error: tool "${name}" is NOT available in the "${phase}" phase (it runs in: ${t.phases.join(", ")}). ` +
+        `Akosua enforces Understand -> Research -> Plan -> Build -> Verify. Finish the current phase and sign off to advance — do NOT tell the user the capability does not exist.`;
     try { return await t.run(args, ctx, phase); }
     catch (e) { return `Error running ${name}: ${(e as Error).message}`; }
   }

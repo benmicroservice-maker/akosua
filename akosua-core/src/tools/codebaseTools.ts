@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Tool } from "../agent/tools.js";
 import { fingerprintProject } from "../context/fingerprint.js";
 import { indexProject, renderBrainV2, walk } from "../context/indexer.js";
+import { TrigramIndex } from "../context/retrieval.js";
 
 /** Understand-phase tools: see the codebase before reasoning about it. */
 
@@ -24,8 +25,32 @@ export const searchCodeTool: Tool = {
   phases: ["understand", "build", "verify"],
   async run(a, ctx) {
     const q = String(a.query); const max = Number(a.max ?? 60);
-    const test = a.regex ? new RegExp(q, "i") : null;
+    // Models reach for regex ("support|chat") but forget regex=true and get a
+    // misleading "No matches" (live lesson). Honour the obvious intent.
+    const looksRegex = /[|()[\].*+?{^$]/.test(q);
+    const useRegex = Boolean(a.regex) || looksRegex;
+    const test = useRegex ? new RegExp(q, "i") : null;
     const hits: string[] = [];
+    // Retrieval v2 R3: trigram pre-filter (the Instant-Grep idea) narrows the
+    // scan to candidate files; line confirmation is unchanged, so results are
+    // identical — just found without reading every file. Index is rebuilt per
+    // call from the working tree, so it can never miss just-written code.
+    const tri = await TrigramIndex.fromWorkspace(ctx.workspaceRoot).catch(() => undefined);
+    const candidates = tri?.candidates(q);
+    const relFiles = candidates ?? tri?.files() ?? undefined;
+    if (relFiles) {
+      for (const rel of relFiles) {
+        const content = tri!.content(rel); if (content === undefined) continue;
+        const lines = content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          if (test ? test.test(lines[i]) : lines[i].toLowerCase().includes(q.toLowerCase())) {
+            hits.push(`${rel}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+            if (hits.length >= max) return hits.join("\n") + `\n…[stopped at ${max} matches]`;
+          }
+        }
+      }
+      return hits.join("\n") || `No matches for "${q}". That absence is evidence: do not assume it exists under another name — search differently or state it is not present.`;
+    }
     for await (const abs of walk(ctx.workspaceRoot)) {
       let content: string; try { content = await fs.readFile(abs, "utf8"); } catch { continue; }
       const lines = content.split("\n");

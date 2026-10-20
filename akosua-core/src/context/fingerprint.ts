@@ -7,6 +7,10 @@ export interface StackFingerprint {
   backend?: { framework: "nestjs" | "express" | "fastify-standalone"; adapter?: "fastify" | "express"; transports: string[]; orm?: "prisma" | "typeorm" };
   web?: { framework: "nextjs" | "react-vite" | "other" };
   mobile?: { framework: "flutter" | "react-native"; state?: "riverpod" | "bloc" | "other" };
+  /** How Flutter was detected when no pubspec was found (honesty over guessing). */
+  flutterDetectedFrom?: string;
+  /** Code-file census by language (files, not bytes): the primary-language truth. */
+  languageCounts?: Record<string, number>;
   /** Workspace-relative dir of the Flutter app ("." = root). */
   flutterDir?: string;
   python?: boolean;
@@ -36,7 +40,28 @@ async function scanManifests(root: string, depth = 3): Promise<Manifest[]> {
   await walk(root, depth);
   return out;
 }
-async function findPubspec(root: string, depth = 3): Promise<{ rel: string; text: string } | undefined> {
+const CENSUS_EXT: Record<string, string> = { ".dart": "dart", ".ts": "ts", ".tsx": "ts", ".js": "ts", ".jsx": "ts", ".py": "py" };
+const CENSUS_SKIP = new Set(["node_modules", ".git", "dist", "build", ".next", ".akosua", ".dart_tool", "__pycache__", ".venv", ".idea", ".vscode"]);
+/** Count code files by language (names only — no reads, so this stays
+ * cheap on big trees; capped descent for pathological workspaces). */
+export async function languageCensus(root: string, maxDirs = 4000): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  let dirs = 0;
+  const walk = async (dir: string): Promise<void> => {
+    if (++dirs > maxDirs) return;
+    let entries; try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith(".") || CENSUS_SKIP.has(e.name)) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) await walk(p);
+      else { const lang = CENSUS_EXT[path.extname(e.name)]; if (lang) counts[lang] = (counts[lang] ?? 0) + 1; }
+    }
+  };
+  await walk(root);
+  return counts;
+}
+
+async function findPubspec(root: string, depth = 4): Promise<{ rel: string; text: string } | undefined> {
   let found: { rel: string; text: string } | undefined;
   const walk = async (dir: string, d: number): Promise<void> => {
     if (d < 0 || found) return;
@@ -87,10 +112,21 @@ export async function fingerprintProject(root: string): Promise<StackFingerprint
   else if (deps["react"] && deps["vite"]) fp.web = { framework: "react-vite" };
 
   const pub = await findPubspec(root);
+  fp.languageCounts = await languageCensus(root).catch(() => ({}));
   if (pub) {
     fp.mobile = { framework: "flutter", state: /riverpod/.test(pub.text) ? "riverpod" : /flutter_bloc/.test(pub.text) ? "bloc" : "other" };
     fp.flutterDir = pub.rel;
   } else if (deps["react-native"] || deps["expo"]) fp.mobile = { framework: "react-native" };
+  // Dart-dominance fallback (live failure 2026-10-20: a Flutter project
+  // whose pubspec sat outside the search depth rendered as NOT Dart at
+  // all). Evidence, labelled as such — never a silent guess.
+  if (!fp.mobile && (fp.languageCounts.dart ?? 0) >= 5) {
+    const total = Object.values(fp.languageCounts).reduce((a, b) => a + b, 0);
+    if (total > 0 && (fp.languageCounts.dart ?? 0) / total >= 0.5) {
+      fp.mobile = { framework: "flutter", state: "other" };
+      fp.flutterDetectedFrom = `dart-source-dominance (${fp.languageCounts.dart}/${total} code files; no pubspec.yaml found within search depth)`;
+    }
+  }
 
   fp.python = await has(path.join(root, "pyproject.toml")) || await has(path.join(root, "requirements.txt"));
   if (fp.shape === "unknown" && (fp.backend || fp.web || fp.mobile)) fp.shape = "monolith";
@@ -140,8 +176,42 @@ async function collectText(root: string, names: string[], depth: number): Promis
   return out;
 }
 
+/** One-line primary-language truth from the census, e.g. "Dart — 96 of 112 code files (86%)". */
+/** Compact orientation injected into the agent's system prompt at
+ * assembly (Aider repo-map pattern: structure with EVERY request, ~15
+ * lines — the agent starts oriented instead of spending its first turns
+ * discovering the project). Detail stays JIT via project_brain/search. */
+export function brainBrief(fp: StackFingerprint, keyFiles: string[] = []): string {
+  const lines = [
+    `# Project orientation (detected from evidence — trust, then verify)`,
+    `- Shape: ${fp.shape}${primaryLanguageLine(fp).replace(/^\n/, " · ")}`,
+    `- Stack: ${[
+      fp.backend ? `backend ${fp.backend.framework}${fp.backend.adapter ? `/${fp.backend.adapter}` : ""}${fp.backend.orm ? ` + ${fp.backend.orm}` : ""}` : "",
+      fp.web ? `web ${fp.web.framework}` : "",
+      fp.mobile ? `mobile ${fp.mobile.framework}${fp.mobile.state ? ` (${fp.mobile.state})` : ""}` : "",
+      fp.python ? "python" : "",
+    ].filter(Boolean).join(" · ") || "no framework detected"}`,
+    fp.flutterDir && fp.flutterDir !== "." ? `- Flutter app dir: ${fp.flutterDir}` : "",
+    `- Verify commands: ${fp.verifyCommands.join(" · ") || "none detected"}`,
+    `- Test commands: ${fp.testCommands.join(" · ") || "none detected"}`,
+    ...(keyFiles.length ? [`- Key files (most depended-on): ${keyFiles.slice(0, 8).join(" · ")}`] : []),
+    `Full file/symbol/contract map: project_brain tool (Understand) or semantic_search — fetch detail just-in-time, do not re-derive the stack.`,
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+export function primaryLanguageLine(fp: StackFingerprint): string {
+  const counts = fp.languageCounts ?? {};
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return "";
+  const total = entries.reduce((a, [, n]) => a + n, 0);
+  const [lang, n] = entries[0];
+  const name = lang === "dart" ? "Dart" : lang === "ts" ? "TypeScript/JS" : lang === "py" ? "Python" : lang;
+  return `\n- Primary language: ${name} — ${n} of ${total} code files (${Math.round((n / total) * 100)}%)`;
+}
+
 export function renderProjectBrain(fp: StackFingerprint, fileSummaries: string): string {
   const b = fp.backend ? `${fp.backend.framework}${fp.backend.adapter ? ` (${fp.backend.adapter} adapter)` : ""}` +
     `${fp.backend.transports.length ? `, transports: ${fp.backend.transports.join("/")}` : ""}${fp.backend.orm ? `, ORM: ${fp.backend.orm}` : ""}` : "—";
-  return `# Project Brain\n\n- Root: ${fp.root}\n- Shape: ${fp.shape}\n- Backend: ${b}\n- Web: ${fp.web?.framework ?? "—"}\n- Mobile: ${fp.mobile ? `${fp.mobile.framework}${fp.mobile.state ? ` (${fp.mobile.state})` : ""}` : "—"}\n- Python: ${fp.python ? "yes" : "no"}\n- Verify commands: ${fp.verifyCommands.join(" · ") || "—"}\n- Test commands: ${fp.testCommands.join(" · ") || "—"}\n\n## Files\n${fileSummaries}\n`;
+  return `# Project Brain\n\n- Root: ${fp.root}\n- Shape: ${fp.shape}${primaryLanguageLine(fp)}\n- Backend: ${b}\n- Web: ${fp.web?.framework ?? "—"}\n- Mobile: ${fp.mobile ? `${fp.mobile.framework}${fp.mobile.state ? ` (${fp.mobile.state})` : ""}` : "—"}${fp.flutterDetectedFrom ? `\n- Flutter detection: ${fp.flutterDetectedFrom}` : ""}\n- Python: ${fp.python ? "yes" : "no"}\n- Verify commands: ${fp.verifyCommands.join(" · ") || "—"}\n- Test commands: ${fp.testCommands.join(" · ") || "—"}\n\n## Files\n${fileSummaries}\n`;
 }

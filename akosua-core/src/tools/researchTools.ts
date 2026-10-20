@@ -2,7 +2,7 @@ import type { Tool } from "../agent/tools.js";
 import type { Context7Client, FirecrawlClient, YouTubeKnowledgeClient } from "../research/clients.js";
 
 export const context7Tool = (c: Context7Client): Tool => ({
-  definition: { name: "context7_docs", description: "Look up CURRENT, version-specific documentation for a library/framework. This is the PRIMARY docs tool — use it before relying on memory for any library API. Pass the exact version from the project's lockfile when known.",
+  definition: { name: "context7_docs", description: "Look up CURRENT, version-specific documentation for a library/framework. This is the PRIMARY docs tool — use it before relying on memory for any library API. Pass the exact version from the project's lockfile when known. If a version is not carried, the tool falls back to unpinned docs and labels them — heed that label.",
     parameters: { type: "object", required: ["library"], properties: { library: { type: "string" }, version: { type: "string" }, topic: { type: "string" } } } },
   phases: ["research", "understand"],
   run: async a => c.docs(String(a.library), a.version ? String(a.version) : undefined, String(a.topic ?? "")),

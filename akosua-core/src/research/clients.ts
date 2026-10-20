@@ -25,9 +25,23 @@ export class Context7Client {
     const id = results?.results?.[0]?.id ?? results?.[0]?.id;
     if (!id) return `Context7: no library found for "${library}". Fall back to Firecrawl on the official docs site.`;
     const v = version ? `/${version}` : "";
-    const res = await this.fetchFn(`https://context7.com/api/v2/context?libraryId=${encodeURIComponent(id + v)}&query=${encodeURIComponent(topic || library)}`, { headers });
+    const urlFor = (suffix: string) => `https://context7.com/api/v2/context?libraryId=${encodeURIComponent(id + suffix)}&query=${encodeURIComponent(topic || library)}`;
+    let res = await this.fetchFn(urlFor(v), { headers });
+    let versionNote = "";
+    if (!res.ok && version) {
+      // Live lesson (2026-10-20): projects pin versions Context7 does not
+      // carry under that exact string (Expo "57.0.0" vs sdk-57 branches) and
+      // the hard 404 wasted the lookup. Retry unpinned and SAY SO — latest
+      // docs labelled as such beat no docs, silently-wrong docs do not.
+      const errBody = await res.text();
+      if (/version_not_found/i.test(errBody)) {
+        const retry = await this.fetchFn(urlFor(""), { headers });
+        if (retry.ok) { res = retry; versionNote = `NOTE: Context7 has no version "${version}" for ${library}; showing UNPINNED (latest) docs — verify version-sensitive APIs against the project's installed types.\n`; }
+        else throw new Error(`Context7 context ${res.status}: ${errBody}`);
+      } else throw new Error(`Context7 context ${res.status}: ${errBody}`);
+    }
     if (!res.ok) throw new Error(`Context7 context ${res.status}: ${await res.text()}`);
-    const out = `Source: Context7 (${library}${version ? "@" + version : ""})\n` + await res.text();
+    const out = `Source: Context7 (${library}${version ? "@" + version : ""})\n` + versionNote + await res.text();
     this.cache.set(cacheKey, out); return out;
   }
 }

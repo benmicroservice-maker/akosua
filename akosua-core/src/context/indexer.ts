@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import type { StackFingerprint } from "./fingerprint.js";
+import { primaryLanguageLine, type StackFingerprint } from "./fingerprint.js";
 
 export interface RouteInfo { method: string; path: string; file: string; }
 export interface DtoInfo { name: string; file: string; fields: { name: string; type: string }[]; }
@@ -108,14 +108,52 @@ export async function loadIndex(root: string): Promise<ProjectIndex | undefined>
   try { return JSON.parse(await fs.readFile(path.join(root, ".akosua/index.json"), "utf8")); } catch { return undefined; }
 }
 
+/** Rank files by structural importance (Aider repo-map pattern, local
+ * version): in-degree in the import graph (how many files depend on this
+ * one), plus entry-point and manifest bonuses. The Brain map and the
+ * system-prompt brief both lead with weight, not alphabet. */
+export function rankFiles(idx: ProjectIndex): { path: string; rank: number }[] {
+  const byPath = new Map(idx.files.map(f => [f.path.replace(/\\/g, "/"), f]));
+  const indeg = new Map<string, number>();
+  const resolve = (fromDir: string, spec: string): string | undefined => {
+    if (!spec.startsWith(".")) return undefined;
+    const base = (fromDir ? fromDir + "/" : "") + spec;
+    const norm = base.split("/").reduce<string[]>((acc, seg) => { if (seg === "..") acc.pop(); else if (seg !== ".") acc.push(seg); return acc; }, []).join("/");
+    for (const cand of [norm, norm + ".ts", norm + ".tsx", norm + ".js", norm + ".dart", norm + "/index.ts", norm + "/index.tsx"]) if (byPath.has(cand)) return cand;
+    return undefined;
+  };
+  for (const f of idx.files) {
+    const dir = f.path.replace(/\\/g, "/").split("/").slice(0, -1).join("/");
+    for (const spec of f.imports) { const t = resolve(dir, spec); if (t && t !== f.path) indeg.set(t, (indeg.get(t) ?? 0) + 1); }
+  }
+  const ENTRY = /(^|\/)(main|index|app|server|mod|main\.dart|App\.(tsx|ts|jsx))\.[a-z]+$/i;
+  return idx.files.map(f => {
+    let rank = indeg.get(f.path.replace(/\\/g, "/")) ?? 0;
+    if (ENTRY.test(f.path)) rank += 5;
+    if (/(^|\/)(package\.json|pubspec\.yaml|schema\.prisma)$/.test(f.path)) rank += 3;
+    rank += Math.min(3, f.symbols.length / 4);
+    return { path: f.path, rank };
+  }).sort((a, b) => b.rank - a.rank || a.path.localeCompare(b.path));
+}
+
 export function renderBrainV2(fp: StackFingerprint, idx: ProjectIndex): string {
-  const header = `# Project Brain (Akosua)\n\n- Root: ${fp.root}\n- Shape: ${fp.shape}\n` +
+  const header = `# Project Brain (Akosua)\n\n- Root: ${fp.root}\n- Shape: ${fp.shape}${primaryLanguageLine(fp)}\n` +
     `- Backend: ${fp.backend ? `${fp.backend.framework}${fp.backend.adapter ? ` (${fp.backend.adapter})` : ""}${fp.backend.transports.length ? ` transports=${fp.backend.transports.join("/")}` : ""}${fp.backend.orm ? ` orm=${fp.backend.orm}` : ""}` : "-"}\n` +
-    `- Web: ${fp.web?.framework ?? "-"} | Mobile: ${fp.mobile ? `${fp.mobile.framework} (${fp.mobile.state ?? "?"})` : "-"} | Python: ${fp.python ? "yes" : "no"}\n` +
+    `- Web: ${fp.web?.framework ?? "-"} | Mobile: ${fp.mobile ? `${fp.mobile.framework} (${fp.mobile.state ?? "?"})` : "-"} | Python: ${fp.python ? "yes" : "no"}${fp.flutterDetectedFrom ? `\n- Flutter detection: ${fp.flutterDetectedFrom}` : ""}\n` +
     `- Verify: ${fp.verifyCommands.join(" · ") || "-"}\n- Indexed: ${idx.files.length} files @ ${idx.indexedAt}\n`;
   const dtoLines = idx.contracts.dtos.map(d => `- ${d.name} (${d.file}): ${d.fields.map(f => `${f.name}: ${f.type}`).join(", ")}`);
   const consumerLines = idx.contracts.consumers.map(c => `- ${c.kind} -> ${c.path}  (${c.file})`);
   const contracts = `\n## Contract map\n### HTTP\n${idx.contracts.http.map(r => `- ${r.method} ${r.path}  (${r.file})`).join("\n") || "- none detected"}\n### Events/messages\n${idx.contracts.events.map(e => `- ${e}`).join("\n") || "- none detected"}\n### DTOs / schemas (payload shapes — changing these ripples to consumers)\n${dtoLines.join("\n") || "- none detected"}\n### API consumers (who calls what)\n${consumerLines.join("\n") || "- none detected"}\n`;
-  const files = `\n## Files\n${idx.files.map(f => `- ${f.path} [${f.language}] ${f.symbols.slice(0, 6).join(", ") || ""}`).join("\n")}\n`;
-  return header + contracts + files;
+  // Budgeted render: contract map is the high-value evidence; the file list
+  // is a MAP, not a dump (JIT retrieval: agents fetch details via tools).
+  // Large repos get the first 250 files + a stated remainder, never a
+  // multi-hundred-KB system-prompt slab.
+  const MAX_FILES = 250;
+  const ranked = rankFiles(idx);
+  const byRankedPath = new Map(idx.files.map(f => [f.path, f]));
+  const shown = ranked.slice(0, MAX_FILES);
+  const remainder = idx.files.length - shown.length;
+  const files = `\n## Files (map, most-depended-on first — use project_brain/search_code/semantic_search for detail)\n${shown.map(r => { const f = byRankedPath.get(r.path)!; return `- ${f.path} [${f.language}] ${f.symbols.slice(0, 6).join(", ") || ""}`; }).join("\n")}${remainder > 0 ? `\n- …and ${remainder} more files (not listed; search for them)` : ""}\n`;
+  const cap = (s: string, n: number) => s.length > n ? s.slice(0, n) + "\n…[Brain section capped]" : s;
+  return header + cap(contracts, 8000) + files;
 }

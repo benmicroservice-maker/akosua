@@ -1,6 +1,6 @@
 {
   "name": "@akosua/core",
-  "version": "0.7.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Akosua core: model providers, phase-gated agent loop, context engine, native research tools",
   "type": "module",
@@ -18,5 +18,9 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "5.6.3"
+  },
+  "dependencies": {
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.24.7"
   }
 }

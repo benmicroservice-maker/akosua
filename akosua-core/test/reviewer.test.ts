@@ -32,7 +32,7 @@ test("reviewer gate: CHANGES REQUESTED sends agent back to Build, APPROVED lets 
   const planner = scripted("anthropic", [
     "Read the code. UNDERSTANDING COMPLETE: app.ts holds v",
     "No external APIs. RESEARCH COMPLETE: local",
-    "Bump v to 2. PLAN APPROVED: one line",
+    "Bump v to 2. PLAN COMPLETE: one line",
     "BUILD COMPLETE: v bumped to 2",
     "Fixed the TODO. BUILD COMPLETE: v bumped, TODO removed",
     "VERIFICATION COMPLETE: checks reported honestly",
@@ -43,7 +43,7 @@ test("reviewer gate: CHANGES REQUESTED sends agent back to Build, APPROVED lets 
   ], reviewerCalls);
 
   const agent = new Agent(
-    { provider: planner, model: "claude-x", systemPrompt: "test", routing: { reviewer: { provider: reviewer, model: "gpt-x" } } },
+    { provider: planner, model: "claude-x", systemPrompt: "test", lane: "act", routing: { reviewer: { provider: reviewer, model: "gpt-x" } } },
     new ToolRegistry(), root);
   const reviews: string[] = [];
   let donePhase = "";
@@ -60,12 +60,12 @@ test("reviewer gate: CHANGES REQUESTED sends agent back to Build, APPROVED lets 
 test("reviewer gate: unavailable reviewer never blocks the run, and is disclosed", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "akosua-review2-"));
   const planner = scripted("anthropic", [
-    "UNDERSTANDING COMPLETE: x", "RESEARCH COMPLETE: x", "PLAN APPROVED: x",
+    "UNDERSTANDING COMPLETE: x", "RESEARCH COMPLETE: x", "PLAN COMPLETE: x",
     "BUILD COMPLETE: x", "VERIFICATION COMPLETE: done, review unavailable noted",
   ]);
   const broken: ModelProvider = { id: "openai", async *complete() { throw new Error("reviewer service down"); } };
   const agent = new Agent(
-    { provider: planner, model: "claude-x", systemPrompt: "test", routing: { reviewer: { provider: broken, model: "gpt-x" } } },
+    { provider: planner, model: "claude-x", systemPrompt: "test", lane: "act", routing: { reviewer: { provider: broken, model: "gpt-x" } } },
     new ToolRegistry(), root);
   const reviews: string[] = []; let donePhase = "";
   for await (const e of agent.run("task")) {
@@ -81,11 +81,11 @@ test("model routing: Editor model drives Build turns, Planner drives the rest", 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "akosua-routing-"));
   const plannerCalls = { n: 0 }, editorCalls = { n: 0 };
   const planner = scripted("anthropic", [
-    "UNDERSTANDING COMPLETE: x", "RESEARCH COMPLETE: x", "PLAN APPROVED: x", "VERIFICATION COMPLETE: x",
+    "UNDERSTANDING COMPLETE: x", "RESEARCH COMPLETE: x", "PLAN COMPLETE: x", "VERIFICATION COMPLETE: x",
   ], plannerCalls);
   const editor = scripted("openai", ["BUILD COMPLETE: edited"], editorCalls);
   const agent = new Agent(
-    { provider: planner, model: "claude-plan", systemPrompt: "test",
+    { provider: planner, model: "claude-plan", systemPrompt: "test", lane: "act",
       routing: { editor: { provider: editor, model: "gpt-edit" } } },
     new ToolRegistry(), root);
   let donePhase = "";
