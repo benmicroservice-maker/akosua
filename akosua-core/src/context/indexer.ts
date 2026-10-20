@@ -116,6 +116,14 @@ export function renderBrainV2(fp: StackFingerprint, idx: ProjectIndex): string {
   const dtoLines = idx.contracts.dtos.map(d => `- ${d.name} (${d.file}): ${d.fields.map(f => `${f.name}: ${f.type}`).join(", ")}`);
   const consumerLines = idx.contracts.consumers.map(c => `- ${c.kind} -> ${c.path}  (${c.file})`);
   const contracts = `\n## Contract map\n### HTTP\n${idx.contracts.http.map(r => `- ${r.method} ${r.path}  (${r.file})`).join("\n") || "- none detected"}\n### Events/messages\n${idx.contracts.events.map(e => `- ${e}`).join("\n") || "- none detected"}\n### DTOs / schemas (payload shapes — changing these ripples to consumers)\n${dtoLines.join("\n") || "- none detected"}\n### API consumers (who calls what)\n${consumerLines.join("\n") || "- none detected"}\n`;
-  const files = `\n## Files\n${idx.files.map(f => `- ${f.path} [${f.language}] ${f.symbols.slice(0, 6).join(", ") || ""}`).join("\n")}\n`;
-  return header + contracts + files;
+  // Budgeted render: contract map is the high-value evidence; the file list
+  // is a MAP, not a dump (JIT retrieval: agents fetch details via tools).
+  // Large repos get the first 250 files + a stated remainder, never a
+  // multi-hundred-KB system-prompt slab.
+  const MAX_FILES = 250;
+  const shown = idx.files.slice(0, MAX_FILES);
+  const remainder = idx.files.length - shown.length;
+  const files = `\n## Files (map — use project_brain/search_code/semantic_search for detail)\n${shown.map(f => `- ${f.path} [${f.language}] ${f.symbols.slice(0, 6).join(", ") || ""}`).join("\n")}${remainder > 0 ? `\n- …and ${remainder} more files (not listed; search for them)` : ""}\n`;
+  const cap = (s: string, n: number) => s.length > n ? s.slice(0, n) + "\n…[Brain section capped]" : s;
+  return header + cap(contracts, 8000) + files;
 }

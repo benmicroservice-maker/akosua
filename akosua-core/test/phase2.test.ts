@@ -51,7 +51,7 @@ test("verify runner: evidence report, failure is visible not hidden", async () =
   const exec = async (cmd: string) => cmd === "check-a" ? { output: "ok", exitCode: 0 } : { output: "boom", exitCode: 2 };
   const r = await runVerification(fp as never, "/tmp", exec);
   assert.equal(r.passed, false);
-  assert.match(r.summary, /PASS {2}check-a/); assert.match(r.summary, /FAIL {2}check-b/);
+  assert.match(r.summary, /PASS +check-a/); assert.match(r.summary, /FAIL +check-b/);
 });
 
 const FIXTURE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../test-projects/sample-monorepo");

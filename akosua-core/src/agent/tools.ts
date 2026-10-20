@@ -1,6 +1,9 @@
 import type { ToolDefinition } from "../providers/types.js";
 
-export interface ToolContext { workspaceRoot: string; signal?: AbortSignal; }
+export interface ToolContext { workspaceRoot: string; signal?: AbortSignal;
+  /** Host permission hook (permission tiers): destructive actions ask the
+   * HUMAN via the host UI. Undefined = deny destructive by default. */
+  confirm?: (question: string) => Promise<boolean>; }
 export interface Tool {
   definition: ToolDefinition;
   /** Phases in which this tool may run. Enforced by the agent loop. */
