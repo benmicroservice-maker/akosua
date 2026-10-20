@@ -16,7 +16,7 @@ test("verify gate: VERIFICATION sign-off is rejected until run_verification actu
   };
   const registry = new ToolRegistry(); registry.register(verifyTool);
   const turns: Array<{ text?: string; tool?: string }> = [
-    { text: "UNDERSTANDING COMPLETE: x" }, { text: "RESEARCH COMPLETE: x" }, { text: "PLAN APPROVED: x" },
+    { text: "UNDERSTANDING COMPLETE: x" }, { text: "RESEARCH COMPLETE: x" }, { text: "PLAN COMPLETE: x" },
     { text: "BUILD COMPLETE: x" },
     { text: "VERIFICATION COMPLETE: trust me, it works" },
     { tool: "run_verification" },

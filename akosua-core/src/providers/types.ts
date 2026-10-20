@@ -18,10 +18,12 @@ export interface ChatMessage {
   name?: string;       // tool name for role=tool
 }
 
+export interface TokenUsage { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number }
+
 export type StreamEvent =
   | { type: "text"; delta: string }
   | { type: "toolCall"; call: ToolCall }
-  | { type: "done"; stopReason: string };
+  | { type: "done"; stopReason: string; usage?: TokenUsage; responseModel?: string };
 
 export interface CompletionRequest {
   model: string;

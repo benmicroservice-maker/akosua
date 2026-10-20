@@ -21,9 +21,9 @@ test("AUDIT: file_editor cannot escape into a sibling folder sharing the root pr
   const ws = path.join(base, "ws"); const evil = path.join(base, "ws-evil");
   await fs.mkdir(ws); await fs.mkdir(evil);
   await fs.writeFile(path.join(evil, "secret.txt"), "do not touch");
-  await assert.rejects(
-    fileEditorTool.run({ command: "view", path: "../ws-evil/secret.txt" }, { workspaceRoot: ws }, "understand"),
-    /escapes workspace/);
+  // Refusal is a returned tool error (the model adapts; see path-safety.test.ts).
+  const res = await fileEditorTool.run({ command: "view", path: "../ws-evil/secret.txt" }, { workspaceRoot: ws }, "understand");
+  assert.match(res, /escapes workspace/);
 });
 
 test("AUDIT: terminal tool is NOT available before Build (phase gate cannot be bypassed with a shell)", async () => {

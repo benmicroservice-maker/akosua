@@ -25,11 +25,12 @@ test("assembled agent walks all 5 phases with gated tools on a real temp project
   const bundle = await buildAkosuaAgent({
     secrets: new InMemorySecretStore(), model: "fake",
     workspaceRoot: root,
+    requirePlanApproval: true,
     provider: scripted([
       { tool: { name: "project_brain" } },
       { text: "It is a tiny TS project with hello.ts. UNDERSTANDING COMPLETE: express app skeleton" },
       { text: "No library APIs needed beyond local code. RESEARCH COMPLETE: local only" },
-      { text: "Create result.txt via editor. PLAN APPROVED: one file" },
+      { text: "Create result.txt via editor. PLAN COMPLETE: one file" },
       { tool: { name: "file_editor", args: { command: "create", path: "result.txt", file_text: "verified" } } },
       { text: "BUILD COMPLETE: result.txt created" },
       { tool: { name: "run_verification" } },
@@ -39,7 +40,17 @@ test("assembled agent walks all 5 phases with gated tools on a real temp project
   const { agent, fingerprint } = bundle;
   assert.equal(fingerprint.backend?.framework, "express");
   const phases: string[] = []; const tools: string[] = [];
+  // IDE plan gate: the run must PAUSE at Plan (no Build tools yet)...
+  let planSeen = "";
   for await (const e of agent.run("create result.txt")) {
+    if (e.type === "phase" && phases[phases.length - 1] !== e.phase) phases.push(e.phase);
+    if (e.type === "tool") tools.push(e.name);
+    if (e.type === "plan") planSeen = e.text;
+  }
+  assert.ok(planSeen.includes("PLAN COMPLETE"), "plan event surfaced for human approval");
+  assert.deepEqual(tools.filter(t => t === "file_editor"), [], "no edits before approval");
+  // ...and only the human approval message lets it Build + Verify.
+  for await (const e of agent.run("PLAN APPROVED: proceed")) {
     if (e.type === "phase" && phases[phases.length - 1] !== e.phase) phases.push(e.phase);
     if (e.type === "tool") tools.push(e.name);
   }

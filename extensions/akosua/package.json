@@ -1,8 +1,8 @@
 {
   "name": "akosua",
   "displayName": "Akosua",
-  "description": "Akosua — personal AI coding agent. Understand -> Research -> Plan -> Build -> Verify. Never guess.",
-  "version": "0.1.0",
+  "description": "Akosua \u2014 personal AI coding agent. Understand -> Research -> Plan -> Build -> Verify. Never guess.",
+  "version": "0.2.0",
   "publisher": "akosua",
   "private": true,
   "engines": {
@@ -13,30 +13,17 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onView:akosua.chat",
-    "onCommand:akosua.setClaudeKey",
+    "onStartupFinished",
+    "onCommand:akosua.openSettings",
     "onCommand:akosua.openPanel"
   ],
   "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "akosua",
-          "title": "Akosua",
-          "icon": "media/akosua.svg"
-        }
-      ]
-    },
-    "views": {
-      "akosua": [
-        {
-          "type": "webview",
-          "id": "akosua.chat",
-          "name": "Chat"
-        }
-      ]
-    },
     "commands": [
+      {
+        "command": "akosua.openSettings",
+        "title": "Akosua: Settings",
+        "icon": "$(gear)"
+      },
       {
         "command": "akosua.openPanel",
         "title": "Akosua: Focus Chat"
@@ -64,6 +51,38 @@
       {
         "command": "akosua.clearKeys",
         "title": "Akosua: Clear All API Keys"
+      },
+      {
+        "command": "akosua.agent.openChangeDiff",
+        "title": "Akosua: Review Changes Since Checkpoint"
+      },
+      {
+        "command": "akosua.agent.toggleInlineDiff",
+        "title": "Akosua: Toggle Inline Diff Decorations"
+      },
+      {
+        "command": "akosua.agent.undoChanges",
+        "title": "Akosua: Undo Changes Since Checkpoint"
+      },
+      {
+        "command": "akosua.inlineEdit",
+        "title": "Akosua: Inline Edit Selection"
+      },
+      {
+        "command": "akosua.agent.brainRefresh",
+        "title": "Akosua: Rebuild Project Brain"
+      },
+      {
+        "command": "akosua.testConnections",
+        "title": "Akosua: Test Provider Connections"
+      },
+      {
+        "command": "akosua.diagnostics.export",
+        "title": "Akosua: Export Diagnostics Bundle (share with developers)"
+      },
+      {
+        "command": "akosua.diagnostics.markIssue",
+        "title": "Akosua: Mark Issue in Flight Log"
       }
     ],
     "configuration": {
@@ -75,7 +94,7 @@
             "anthropic",
             "openai"
           ],
-          "default": "anthropic",
+          "default": "openai",
           "description": "Model provider used for planning/review judgement."
         },
         "akosua.editorProvider": {
@@ -84,7 +103,7 @@
             "anthropic",
             "openai"
           ],
-          "default": "anthropic",
+          "default": "openai",
           "description": "Model provider used for code edits."
         },
         "akosua.reviewerProvider": {
@@ -149,9 +168,62 @@
           "default": "",
           "editPresentation": "multilineText",
           "description": "Your standing instructions for the agent (all projects). Project-level AKOSUA_RULES.md adds on top. This is how Akosua never 'forgets' your rules between chats."
+        },
+        "akosua.autocomplete": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ghost-text autocomplete (Cursor Tab analogue) using your Editor model route. Off by default: it spends API calls as you type."
+        },
+        "akosua.applyProvider": {
+          "type": "string",
+          "default": "",
+          "description": "Fast-apply provider for inline edits (blank = Editor route, then Planner). A small fast model is ideal here."
+        },
+        "akosua.applyModel": {
+          "type": "string",
+          "default": "",
+          "description": "Fast-apply model id for inline edits (blank = Editor model, then Planner model)."
+        },
+        "akosua.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Flight Recorder: record agent runs to .akosua/diagnostics for post-hoc diagnosis. No API keys are ever recorded."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "akosua.gettingStarted",
+        "title": "Get started with Akosua",
+        "description": "Your AI pair-programmer that understands first, researches live docs, and never edits before your plan approval.",
+        "steps": [
+          {
+            "id": "keys",
+            "title": "Add your API keys",
+            "description": "Open the Akosua Settings tab and add a Claude and/or OpenAI key. Keys live in Windows Credential Manager \u2014 never in files.",
+            "media": {
+              "markdown": "Akosua uses YOUR keys. Open **[Akosua Settings](command:akosua.openSettings)**, paste a key, then use **Test**. Everything Akosua needs lives on that one page."
+            }
+          },
+          {
+            "id": "models",
+            "title": "Set your models",
+            "description": "On the same Akosua Settings tab: Planner (strongest), Editor (fast), Reviewer (cross-check). Akosua never guesses model names.",
+            "media": {
+              "markdown": "Set model IDs in **[Akosua Settings](command:akosua.openSettings)**. Use exact model IDs from your provider \u2014 Akosua never guesses them."
+            }
+          },
+          {
+            "id": "open",
+            "title": "Open a project & run the agent",
+            "description": "Open a folder, press Ctrl+L, describe the task. Watch: Understand \u2192 Research \u2192 Plan (your approval) \u2192 Build \u2192 Verify.",
+            "media": {
+              "markdown": "Press **Ctrl+L** and describe the task. The agent fingerprints your stack, reads the code, checks live docs, then stops for your **plan approval** before editing anything. Every run is checkpointed \u2014 Keep or Undo."
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "build:core": "cd ../../akosua-core && npm run build",

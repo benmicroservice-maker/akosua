@@ -34,6 +34,8 @@ function safeParse(s: string): unknown { try { return JSON.parse(s); } catch { r
 async function* parseAnthropicStream(body: AsyncIterable<Uint8Array>): AsyncIterable<StreamEvent> {
   const dec = new TextDecoder(); let buf = "";
   const partial: Record<number, { id: string; name: string; json: string }> = {};
+  let usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } = {};
+  let responseModel: string | undefined;
   for await (const chunk of body) {
     buf += dec.decode(chunk, { stream: true });
     let i: number;
@@ -49,7 +51,15 @@ async function* parseAnthropicStream(body: AsyncIterable<Uint8Array>): AsyncIter
       if (ev.type === "content_block_stop" && partial[ev.index]) {
         const p = partial[ev.index]; yield { type: "toolCall", call: { id: p.id, name: p.name, arguments: p.json || "{}" } };
       }
-      if (ev.type === "message_delta" && ev.delta?.stop_reason) yield { type: "done", stopReason: ev.delta.stop_reason };
+      if (ev.type === "message_start") {
+        responseModel = ev.message?.model ?? responseModel;
+        const u = ev.message?.usage ?? {};
+        usage = { inputTokens: u.input_tokens, cachedInputTokens: u.cache_read_input_tokens, outputTokens: u.output_tokens };
+      }
+      if (ev.type === "message_delta") {
+        if (ev.usage?.output_tokens !== undefined) usage = { ...usage, outputTokens: ev.usage.output_tokens };
+        if (ev.delta?.stop_reason) yield { type: "done", stopReason: ev.delta.stop_reason, usage, responseModel };
+      }
     }
   }
 }

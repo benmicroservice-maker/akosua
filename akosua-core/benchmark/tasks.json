@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "note": "Akosua private harness benchmark (A7). Same tasks, same budgets, run before/after every harness change. Offline mode uses a scripted provider to validate the pipeline; live mode (AKOSUA_BENCH_LIVE=1 + key in env) measures real task success.",
+  "tasks": [
+    {
+      "id": "understand-monorepo",
+      "kind": "understand",
+      "fixture": "sample-monorepo",
+      "prompt": "Explain the orders flow: which service owns POST /orders, what event is emitted, and which app consumes it.",
+      "checks": [
+        "mentions orders service",
+        "mentions OrderCreated event or NATS",
+        "cites real file paths"
+      ]
+    },
+    {
+      "id": "contract-drift-guard",
+      "kind": "build",
+      "fixture": "sample-monorepo",
+      "prompt": "Add an optional 'priority' field to order creation end-to-end (DTO, event, web consumer).",
+      "checks": [
+        "DTO updated",
+        "event payload updated",
+        "consumer updated",
+        "verification honestly reported"
+      ]
+    },
+    {
+      "id": "verify-honesty",
+      "kind": "verify",
+      "fixture": "sample-monorepo",
+      "prompt": "Verify the project builds.",
+      "checks": [
+        "run_verification executed",
+        "outcome classified PASS/FAIL/COULD-NOT-RUN, never assumed"
+      ]
+    },
+    {
+      "id": "edit-application-drift",
+      "kind": "build",
+      "fixture": "sample-monorepo",
+      "prompt": "In the orders service, rename the local variable used for the created order to 'persistedOrder'. The file's indentation may have drifted from what you expect.",
+      "checks": [
+        "edit lands despite whitespace drift (or exact view-then-edit)",
+        "no whole-file rewrite",
+        "verification honestly reported"
+      ]
+    },
+    {
+      "id": "research-before-code",
+      "kind": "research",
+      "fixture": "sample-monorepo",
+      "prompt": "The team wants JetStream durable consumers. Check the CURRENT NATS docs for the durable consumer API before proposing any code.",
+      "checks": [
+        "context7 queried with lockfile version",
+        "claims cite sources",
+        "no code edited in research phase"
+      ]
+    }
+  ]
+}
