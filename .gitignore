@@ -12,3 +12,6 @@ __pycache__/
 
 # deliverable bundles never enter the repo
 *.bundle
+
+# deliverable bundles never enter the repo
+*.bundle
