@@ -243,7 +243,12 @@ export class AkosuaChatViewPane extends ViewPane {
 				this.setWorking(false);
 				void this.commandService.executeCommand('akosua.diagnostics.uiEvent', { kind: 'done', phase: ev.phase });
 				const worked = ev.durationMs ? `Worked for ${formatWorked(ev.durationMs)} · ` : '';
-				this.logEl.appendChild(noticeCard('info', `${worked}Run finished (phase: ${ev.phase ?? 'verify'}). Review the change-set, then Keep it or Undo.`));
+				// Change-set language only makes sense when a Build/Verify run
+				// actually produced changes; read-only runs (chat/ask/orient)
+				// end in early phases and must not claim a change-set exists.
+				this.logEl.appendChild(noticeCard('info', ev.phase === 'verify'
+					? `${worked}Run finished (phase: verify). Review the change-set, then Keep it or Undo.`
+					: `${worked}Run finished (phase: ${ev.phase ?? 'understand'}).`));
 				break;
 			}
 			case 'cancelled': this.finalizeText(); this.setWorking(false); void this.commandService.executeCommand('akosua.diagnostics.uiEvent', { kind: 'cancelled', phase: ev.phase }); this.logEl.appendChild(noticeCard('warn', `Run cancelled during ${ev.phase ?? ''}. The pre-run checkpoint still lets you undo partial changes.`)); break;

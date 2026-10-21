@@ -36,6 +36,10 @@ export function classifyIntent(raw: string): Intent {
     .replace(/^could\s+you\s+(please\s+)?/i, "");
   if (/^\s*PLAN (APPROVED|CHANGES REQUESTED):/i.test(text)) return { lane: "act", reason: "plan-gate response" };
   if (text.length <= 80 && CHAT_EXACT.test(firstLine)) return { lane: "chat", reason: "small-talk shape, no workspace reference" };
+  // "get context awareness of this project" is a question wearing an
+  // imperative: the deliverable is an overview, not a change. Read-only.
+  if (/\b(context awareness|overview|walk me through|tour of)\b/i.test(firstLine) && !/\b(fix|create|edit|change|run|start|install|implement|refactor|delete|remove|add|build|deploy)\b/i.test(firstLine)) return { lane: "ask", reason: "overview/awareness request — read-only answer" };
+  if (/\b(then|after that|afterwards)\s+(please\s+)?(fix|create|edit|run|start|install|implement|refactor|delete|remove|add|build|deploy)\b/i.test(firstLine)) return { lane: "act", reason: "explicit sequenced action follows" };
   if (ACTION_LEAD.test(firstLine)) return { lane: "act", reason: "imperative action verb leads" };
   if (/\b(can'?t|cannot|can not|unable to|won'?t|don'?t|doesn'?t|not able to)\b[^.?!]*\b(use|run|open|edit|access|start|do|work)\b/i.test(firstLine)) return { lane: "act", reason: "capability challenge — prove it by doing" };
   const interrogative = QUESTION_LEAD.test(firstLine) || /^do\s+(you|we|i)\b/i.test(firstLine) || /\?\s*$/.test(firstLine);

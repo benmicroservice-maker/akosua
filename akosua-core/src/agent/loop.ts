@@ -234,14 +234,16 @@ export class Agent {
       // Transient provider failures (429/5xx/network blips) die mid-stream in
       // lesser harnesses. Retry the TURN once, visibly; never swallow silently.
         const profile = profileFor(route.provider, route.model);
-        const offeredTools = lane === "ask" ? this.tools.definitionsFor("understand") : this.tools.definitionsFor(this.phase);
+        const RESEARCH_TOOLS = new Set(["context7_docs", "firecrawl_search", "firecrawl_scrape", "youtube_search", "youtube_learn", "package_lookup", "delegate_research", "delegate_research_batch"]);
+        let offeredTools = lane === "ask" ? this.tools.definitionsFor("understand") : this.tools.definitionsFor(this.phase);
+        if (actKind === "execute") offeredTools = offeredTools.filter(t => !RESEARCH_TOOLS.has(t.name));
         // Phase-capability brief, rebuilt per request (never persisted to
         // history): the model always knows what it may use NOW and what
         // later phases unlock. This is the exact fact the agent got wrong
         // live ("this session has no terminal", 2026-10-20).
         const phaseBrief = lane === "act"
           ? `\n\n[CURRENT PHASE: ${this.phase}. Tools available to you NOW: ${offeredTools.map(t => t.name).join(", ") || "none"}.` +
-            PHASES.filter(p => p !== this.phase).map(p => ` In ${p}: ${this.tools.definitionsFor(p).map(t => t.name).join(", ") || "none"}.`).join("") +
+            PHASES.filter(p => p !== this.phase).map(p => actKind === "execute" && p === "research" ? " In research: SKIPPED for execution tasks." : ` In ${p}: ${this.tools.definitionsFor(p).map(t => t.name).join(", ") || "none"}.`).join("") +
             ` Later-phase capabilities ARE yours — advance by signing off this phase; never tell the user a listed capability does not exist.]`
           : `\n\n[READ-ONLY QUESTION: answer from evidence. You have read/research tools only; do not edit, run commands, or start the phase ceremony — investigate, then answer directly.]`;
         const kindBrief = actKind === "execute" && lane === "act"
@@ -338,7 +340,11 @@ export class Agent {
         // The plan is surfaced to the human; only their explicit approval
         // message moves the run forward. A model emitting the approval
         // token itself must never self-approve (live lesson 2026-10-18).
-        if (this.cfg.requirePlanApproval && this.phase === "plan" && hasSignoff(text, "plan")) {
+        // EXECUTE-KIND EXEMPTION (live lesson, round 2): a run/start/test
+        // task changes no files — there is nothing for a human to approve.
+        // Gating it stranded "start the app" at (phase: plan) forever while
+        // every follow-up message restarted at Understand.
+        if (this.cfg.requirePlanApproval && actKind !== "execute" && this.phase === "plan" && hasSignoff(text, "plan")) {
           if (this.planApproved) {
             this.planApproved = false; // one approval authorises one Plan->Build advance
           } else {
@@ -351,6 +357,13 @@ export class Agent {
         while (this.phase !== "verify" && hasSignoff(text, this.phase)) {
           this.phase = PHASES[PHASES.indexOf(this.phase) + 1];
           this.phaseToolCount = 0;
+          // EXECUTE-KIND: Research is not slimmed, it is SKIPPED (round 2:
+          // the model still spent 3.6s on Context7 Expo docs before not
+          // starting the app). The manifest/scripts are the research.
+          if (actKind === "execute" && this.phase === "research") {
+            this.phase = "plan";
+            this.flight("phase.skip", { phase: "research", actKind });
+          }
         }
         if (this.phase === "verify" && hasSignoff(text, "verify")) {
           // VERIFY GATE (loop-level, not prompt-level): no sign-off is
@@ -399,9 +412,11 @@ export class Agent {
         if (malformed) { this.flight("notice", { text: `Malformed JSON arguments for ${call.name}` }); yield { type: "notice", text: `Model sent malformed JSON arguments for ${call.name}; the tool was given {} and its error explains the expected shape.` }; }
         this.flight("tool", { name: call.name, callId: call.id, args: redactForFlightLog(args), result, resultChars: result.length, ok: !(streak >= 3) && !looksLikeFailure(result), durationMs: Date.now() - t0, phase: this.phase, turn, ...(malformed ? { malformedArgs: true } : {}), ...(streak >= 3 ? { repeatBlocked: streak } : {}) });
         yield { type: "tool", name: call.name, result, durationMs: Date.now() - t0, args,
-          ...(typeof args.action === "string" ? { action: args.action } : {}),
-          ...(typeof args.path === "string" && call.name === "file_editor" ? { action: `${String(args.action ?? "edit")}:${args.path}` } : {}) };
-        if (this.phase === "verify" && call.name === "run_verification") this.verificationAttempted = true;
+          // The UI labels Read vs Edit from this field. file_editor's verb
+          // is args.command ("view" vs create/insert/str_replace) — round 2
+          // bug: this read args.action, so every read rendered "Edit file".
+          ...(typeof args.command === "string" ? { action: args.command } : typeof args.action === "string" ? { action: args.action } : {}) };
+        if (this.phase === "verify" && (call.name === "run_verification" || (actKind === "execute" && (call.name === "terminal" || call.name === "terminal_jobs")))) this.verificationAttempted = true;
         // A2: the MODEL gets the shaped (error-first, capped) rendering;
         // the UI event above already carried the full result.
         this.history.push({ role: "tool", content: shapeToolResultFor(call.name, result), toolCallId: call.id, name: call.name });
